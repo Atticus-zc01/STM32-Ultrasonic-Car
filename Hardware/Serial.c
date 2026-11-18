@@ -1,6 +1,7 @@
 #include "myfile.h"
 uint8_t Serial_RxData;
 uint8_t Serial_RxFlag;
+static uint8_t Serial_Ready = 0;   /* 没初始化串口时，发送函数直接返回 */
 /************************串口传输***************************/
 void Serial_Init(void)
 {
@@ -26,10 +27,12 @@ void Serial_Init(void)
     USART_Init(USART3, &USART_InitStructure);
 
     USART_Cmd(USART3, ENABLE);
+    Serial_Ready = 1;
 }
 
 void Serial_SendByte(uint8_t Byte)
 {
+	if (!Serial_Ready) return;          /* 串口未初始化（PB10/PB11 给超声波了），不要死等 TXE */
 	USART_SendData(USART3, Byte);
 	while (USART_GetFlagStatus(USART3, USART_FLAG_TXE) == RESET);
 }

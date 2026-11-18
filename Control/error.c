@@ -1,102 +1,105 @@
 #include "myfile.h"
 #include "sensor.h"
 
-/************************传感器误差计算***************************/
-// 新增结构体和宏定义（放在文件开头）
-#define SENSOR_NUM 5									 //传感器数量
+/* =====================================================================
+ *  整改说明（2026-11）
+ *  1) 先判"有没有探头压线"再做除法（原实现 0/0 会算出 NaN）
+ *  2) 取消边缘 x27 增益（它与 times=10、限幅 ±30 叠加后必然饱和，
+ *     边缘增益约为中心的 18 倍，表现为贴线左右猛甩）
+ *  3) 丢线时不再冻结误差（原实现会保持最后转角原地画圈），
+ *     改为按指数衰减，让车先直线冲过缝隙，交给 element.c 的搜索流程
+ *  4) 丢线状态用 Line_Active 显式传递，不再靠 "err==0" 猜
+ * ===================================================================== */
 
-/* **************** 结构体 **************** */
-typedef struct   //用于定义结构体类型。结构体是一种用户自定义的数据类型，可以将多个数据项（成员）组合在一起。在这里，typedef 是将结构体定义的类型命名为 SensorMap，以便后续使用。
+#define SENSOR_NUM 5
+
+typedef struct
 {
-    float Angle;  // 传感器位置坐标（线性分布）
-    float channel;  // 传感器对应的通道号
+    float Angle;
+    float channel;
 } SensorAngle;
 
-typedef struct   //用于定义结构体类型。结构体是一种用户自定义的数据类型，可以将多个数据项（成员）组合在一起。在这里，typedef 是将结构体定义的类型命名为 SensorMap，以便后续使用。
+typedef struct
 {
-    float Angle;  
-    float error;  
-	float ALPHA;
-	uint16_t times;  //放大倍数，归一化到100 -100之间
-} FusedAngle; 
+    float Angle;
+    float error;
+    float ALPHA;
+    float times;
+} FusedAngle;
 
+static FusedAngle fusedSensor = {0.0f, 0.0f, FUSED_ALPHA, FUSED_TIMES};
 
-static FusedAngle fusedSensor={0,0,0.7,10};  // 创建fusedSensor变量
-// 根据传感器物理位置定义坐标（假设线性排列）
-static const SensorAngle sensorAngle[SENSOR_NUM] =   //数组是一个常量数组，且只能在定义它的文件或代码段内访问。const 表明数组中的元素值不可修改。
+static const SensorAngle sensorAngle[SENSOR_NUM] =
 {
-    {-2.5, 1}, // L2
-    {-1.0, 2}, // L1	
-    { 0, 3}, // M 
-    { 1.0, 4}, // R1
-    { 2.5, 5}  // R2	
+    {-2.5f, 1},   /* L2 */
+    {-1.0f, 2},   /* L1 */
+    { 0.0f, 3},   /* M  */
+    { 1.0f, 4},   /* R1 */
+    { 2.5f, 5}    /* R2 */
 };
 
+uint8_t Line_Active = 1;
 
-/* ****************计算传感器偏差 **************** */
-float Error_Calcaulate()
-{		
-	float active_sum = 0;
-	int active_count = 0;
-	float err=0;
-	 for (int i = 0; i < SENSOR_NUM; i++) 		  
-	{
-		if (digital(sensorAngle[i].channel))  		//digital 的函数，传入传感器的通道号。
-			{
-                active_sum += sensorAngle[i].Angle; // 累加激活传感器的位置
-                active_count++; 				    //在循环中，active_count 会在每个激活的传感器时增加 1：
-			}
-    }	
-		err = active_sum / active_count;	//加权平均		
-		err = err*Right_err();	
-		if (active_count == 0) return 0;  // 处理无传感器情况
-		return err;           
-}
-
-
-/* **************** 陀螺仪辅助计算 **************** */
-float get_fused_error(float sensor_err, float gyro_z) 
-{ 
-		static float last_gyro_z = 0;
-		float dt1=0.003f;
-	    fusedSensor.Angle += (last_gyro_z + gyro_z) / 2 * dt1;
-	    fusedSensor.Angle=Min_Max( fusedSensor.Angle,-10,10);
-		if(sensor_err!=0||digital(3)==1) 
-		{			
-		// 情况A：有传感器信号时，重置积分，重置方式为0.4的传感器0.6的陀螺仪。
-			
-			fusedSensor.Angle=fusedSensor.Angle * (1-fusedSensor.ALPHA) + (sensor_err*fusedSensor.ALPHA);	
-			fusedSensor.error=fusedSensor.Angle * (1-fusedSensor.ALPHA) + (sensor_err*fusedSensor.ALPHA)*fusedSensor.times;		
-	    }    		
-		
-		// 情况B：无传感器信号时，信任陀螺仪
-		else
-		{
-			//fusedSensor.error=fusedSensor.Angle*fusedSensor.times;//没有传感器的时候，陀螺仪为不断积分，误差一直变大	 *fusedSensor.times		
-		}				
-		last_gyro_z  = gyro_z;		
-		fusedSensor.error=Min_Max(fusedSensor.error,-30,30);
-		fusedSensor.error=low_pass_filter(fusedSensor.error,0.5);
-		return fusedSensor.error;
-}
-
-
-float Right_err()
+float Error_Calcaulate(void)
 {
-	 if(L2==0&&L1==1&&M==1&&R1==1&&R2==1){return 27.0f;}
-	 else if(L2==0&&L1==0&&M==1&&R1==1&&R2==1){return 27.0f;}
-	 
-     else if(L2==1&&L1==1&&M==1&&R1==1&&R2==0){return 27.0f;}
-	 else if(L2==1&&L1==1&&M==1&&R1==0&&R2==0){return 27.0f;}		 
-     else {return 1.0f;}
-	
+    float sum = 0.0f;
+    int   cnt = 0;
+    int   i;
+
+    for (i = 0; i < SENSOR_NUM; i++)
+    {
+        if (digital((unsigned char)sensorAngle[i].channel))
+        {
+            sum += sensorAngle[i].Angle;
+            cnt++;
+        }
+    }
+
+    if (cnt == 0)
+    {
+        Line_Active = 0;
+        return 0.0f;                 /* 先判空再做除法 */
+    }
+
+    Line_Active = 1;
+    return (sum / (float)cnt) * Right_err();
 }
-/**
- * @brief 带初始化的一阶低通滤波器
- * @param input 输入值
- * @param alpha 滤波系数 (0-1)
- * @return 滤波后的输出值
- */
+
+/* 保留接口；边缘放大已取消，增益统一由 FUSED_TIMES 决定 */
+float Right_err(void)
+{
+    return 1.0f;
+}
+
+float get_fused_error(float sensor_err, float gyro_z)
+{
+    static float last_gyro_z = 0.0f;
+
+    fusedSensor.Angle += (last_gyro_z + gyro_z) * 0.5f * CTRL_DT_S;
+    fusedSensor.Angle = Min_Max(fusedSensor.Angle, -10.0f, 10.0f);
+
+    if (Line_Active)
+    {
+        fusedSensor.Angle = fusedSensor.Angle * (1.0f - fusedSensor.ALPHA)
+                          + sensor_err * fusedSensor.ALPHA;
+
+        fusedSensor.error = fusedSensor.Angle * (1.0f - fusedSensor.ALPHA)
+                          + sensor_err * fusedSensor.ALPHA * fusedSensor.times;
+    }
+    else
+    {
+        /* 丢线：衰减到零 = 指令回正，先直线穿过缝隙 */
+        fusedSensor.error *= LINE_LOST_DECAY;
+        fusedSensor.Angle  = fusedSensor.error;
+    }
+
+    last_gyro_z = gyro_z;
+
+    fusedSensor.error = Min_Max(fusedSensor.error, -FUSED_LIMIT, FUSED_LIMIT);
+    fusedSensor.error = low_pass_filter(fusedSensor.error, FUSED_LP_ALPHA);
+
+    return fusedSensor.error;
+}
 
 float low_pass_filter(float input, float alpha)
 {
@@ -104,14 +107,3 @@ float low_pass_filter(float input, float alpha)
     output = alpha * input + (1.0f - alpha) * output;
     return output;
 }
-
-
-
-
-
-
-
-
-
-
-
