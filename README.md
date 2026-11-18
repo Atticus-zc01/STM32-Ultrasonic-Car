@@ -18,8 +18,7 @@
 | 编码器（TIM3 / TIM4） | PA6 / PA7、PB6 / PB7 |
 | 电机 PWM | PA8（TIM1_CH1）、PA11（TIM1_CH4） |
 | 电机方向 | PB12、PB13、PB14、PB15 |
-| MPU6050（软件 I2C） | PB3（SDA）、PB4（SCL） |
-| OLED（软件 I2C） | PB9（SDA）、PB8（SCL） |
+| OLED / MPU6050（软件 I2C） | PB3（SDA）、PB4（SCL） |
 | 按键 | PA0、PA1 |
 | 超声波 1（Trig / Echo） | PA3 / PA2 |
 | 超声波 2（Trig / Echo） | PB10 / PB11（原蓝牙串口口） |
